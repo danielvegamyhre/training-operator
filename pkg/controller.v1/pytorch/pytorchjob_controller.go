@@ -420,7 +420,7 @@ func (r *PyTorchJobReconciler) UpdateJobStatus(job interface{},
 						return err
 					}
 				}
-				// when master is succeed, the job is finished. <-- TFJob spec configurable SucessPolicy attribute, not
+				// when master is succeed, the job is finished. <-- TFJob spec has a configurable SuccessPolicy attribute, not
 				// hard coded logic.
 				if expected == 0 {
 					msg := fmt.Sprintf("PyTorchJob %s is successfully completed.", pytorchjob.Name)
