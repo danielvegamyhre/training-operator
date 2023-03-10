@@ -22,9 +22,11 @@ import (
 )
 
 func ValidateV1PyTorchJob(pytorchJob *PyTorchJob) error {
+	// standard k8s validation
 	if errors := apimachineryvalidation.NameIsDNS1035Label(pytorchJob.ObjectMeta.Name, false); errors != nil {
 		return fmt.Errorf("PyTorchJob name is invalid: %v", errors)
 	}
+	// custom validation for pytorchjob
 	if err := validatePyTorchReplicaSpecs(pytorchJob.Spec.PyTorchReplicaSpecs); err != nil {
 		return err
 	}
@@ -40,6 +42,7 @@ func validatePyTorchReplicaSpecs(specs map[commonv1.ReplicaType]*commonv1.Replic
 			return fmt.Errorf("PyTorchJobSpec is not valid: containers definition expected in %v", rType)
 		}
 		// Make sure the replica type is valid.
+		// This could be abstracted to all training jobs which use the coordinator/worker paradigm
 		validReplicaTypes := []commonv1.ReplicaType{PyTorchJobReplicaTypeMaster, PyTorchJobReplicaTypeWorker}
 
 		isValidReplicaType := false
@@ -55,6 +58,7 @@ func validatePyTorchReplicaSpecs(specs map[commonv1.ReplicaType]*commonv1.Replic
 		}
 
 		//Make sure the image is defined in the container
+		// standard validation, checking required field (container.image) is set, easily applies to all controllers
 		defaultContainerPresent := false
 		for _, container := range value.Template.Spec.Containers {
 			if container.Image == "" {
@@ -66,10 +70,13 @@ func validatePyTorchReplicaSpecs(specs map[commonv1.ReplicaType]*commonv1.Replic
 			}
 		}
 		//Make sure there has at least one container named "pytorch"
+		// Not sure if there is a clean way to abstract this or have a generic
+		// way of checking for specific required containers.
 		if !defaultContainerPresent {
 			msg := fmt.Sprintf("PyTorchJobSpec is not valid: There is no container named %s in %v", PytorchJobDefaultContainerName, rType)
 			return fmt.Errorf(msg)
 		}
+		// can only be 1 coordinator, should be the same for others
 		if rType == PyTorchJobReplicaTypeMaster {
 			if value.Replicas != nil && int(*value.Replicas) != 1 {
 				return fmt.Errorf("PyTorchJobSpec is not valid: There must be only 1 master replica")

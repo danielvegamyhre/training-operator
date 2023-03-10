@@ -77,6 +77,7 @@ type TFJobSpec struct {
 	// SuccessPolicy defines the policy to mark the TFJob as succeeded.
 	// Default to "", using the default rules.
 	// +optional
+	// Pytorch has no success policy
 	SuccessPolicy *SuccessPolicy `json:"successPolicy,omitempty"`
 
 	// A map of TFReplicaType (type) to ReplicaSpec (value). Specifies the TF cluster configuration.
@@ -85,6 +86,7 @@ type TFJobSpec struct {
 	//     "PS": ReplicaSpec,
 	//     "Worker": ReplicaSpec,
 	//   }
+	// this is the same as Pytorch
 	TFReplicaSpecs map[commonv1.ReplicaType]*commonv1.ReplicaSpec `json:"tfReplicaSpecs"`
 
 	// A switch to enable dynamic worker

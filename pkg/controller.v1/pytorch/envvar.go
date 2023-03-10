@@ -70,6 +70,8 @@ func setPodEnv(obj interface{}, podTemplateSpec *corev1.PodTemplateSpec, rtype, 
 
 			totalReplicas := getTotalReplicas(pytorchjob)
 
+			// these can be set via ConfigMap w/ mapping required PyTorch env vars -> templated values,
+			// and having the jobset controller perform template replacement
 			podTemplateSpec.Spec.Containers[i].Env = append(podTemplateSpec.Spec.Containers[i].Env, corev1.EnvVar{
 				Name:  "WORLD_SIZE",
 				Value: strconv.Itoa(int(totalReplicas)),
@@ -81,6 +83,7 @@ func setPodEnv(obj interface{}, podTemplateSpec *corev1.PodTemplateSpec, rtype, 
 		}
 
 		// Set the elastic environment variables if the elasticPolicy is not null.
+		// these are deprecated apparently
 		if pytorchjob.Spec.ElasticPolicy != nil {
 			envVars, err := GetElasticEnvVarGenerator().Generate(pytorchjob)
 			if err != nil {

@@ -62,6 +62,8 @@ const (
 
 // NewReconciler creates a PyTorchJob Reconciler
 func NewReconciler(mgr manager.Manager, gangSchedulingSetupFunc common.GangSchedulingSetupFunc) *PyTorchJobReconciler {
+	// Reconciler is composed of upstream k8s components and all
+	// other controllers are built from the same components.
 	r := &PyTorchJobReconciler{
 		Client:    mgr.GetClient(),
 		Scheme:    mgr.GetScheme(),
@@ -70,13 +72,13 @@ func NewReconciler(mgr manager.Manager, gangSchedulingSetupFunc common.GangSched
 		Log:       log.Log,
 	}
 
-	// Create clients
+	// Create clients - all upstream k8s components (like kubeclientset, informers, and shared informers)
 	cfg := mgr.GetConfig()
 	kubeClientSet := kubeclientset.NewForConfigOrDie(cfg)
 	sharedInformers := informers.NewSharedInformerFactory(kubeClientSet, 0)
 	priorityClassInformer := sharedInformers.Scheduling().V1().PriorityClasses()
 
-	// Initialize common job controller
+	// Initialize common job controller. Job specific reconciler is used to build controller but otherwise all standard
 	r.JobController = common.JobController{
 		Controller:                  r,
 		Expectations:                expectation.NewControllerExpectations(),
@@ -89,6 +91,7 @@ func NewReconciler(mgr manager.Manager, gangSchedulingSetupFunc common.GangSched
 		ServiceControl:              control.RealServiceControl{KubeClient: kubeClientSet, Recorder: r.recorder},
 	}
 
+	// This sets gang scheduler, volcano scheduler, or neither to be used based on cmd line args
 	gangSchedulingSetupFunc(&r.JobController)
 
 	return r
@@ -122,6 +125,7 @@ func (r *PyTorchJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	_ = log.FromContext(ctx)
 	logger := r.Log.WithValues(kubeflowv1.PytorchJobSingular, req.NamespacedName)
 
+	// PyTorchJob spec has some differences from TFJob, see comments in pytorch_types.go
 	pytorchjob := &kubeflowv1.PyTorchJob{}
 	err := r.Get(ctx, req.NamespacedName, pytorchjob)
 	if err != nil {
@@ -129,6 +133,7 @@ func (r *PyTorchJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
+	// see comments in pytorch_validation.go
 	if err = kubeflowv1.ValidateV1PyTorchJob(pytorchjob); err != nil {
 		logger.Error(err, "PyTorchJob failed validation")
 		r.Recorder.Eventf(pytorchjob, corev1.EventTypeWarning, commonutil.JobFailedValidationReason, "PyTorchJob failed validation because %s", err)
@@ -153,6 +158,7 @@ func (r *PyTorchJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	// Set default priorities to pytorch job
 	r.Scheme.Default(pytorchjob)
 
+	// pytorchjob supports HPA but TFJob does not
 	err = r.ReconcileHPA(pytorchjob)
 	if err != nil {
 		logger.Error(err, "Reconcile PyTorchJob HPA error")
@@ -355,6 +361,7 @@ func (r *PyTorchJobReconciler) DeleteJob(job interface{}) error {
 func (jc *PyTorchJobReconciler) GenLabelSelector(jobName string,
 	rtype commonv1.ReplicaType) *metav1.LabelSelector {
 	labels := jc.GenLabels(jobName)
+	// for some reason pytorch lowercases the replicatype, other controllers do not
 	labels[commonv1.ReplicaTypeLabel] = strings.ToLower(string(rtype))
 
 	return &metav1.LabelSelector{
@@ -413,7 +420,8 @@ func (r *PyTorchJobReconciler) UpdateJobStatus(job interface{},
 						return err
 					}
 				}
-				// when master is succeed, the job is finished.
+				// when master is succeed, the job is finished. <-- TFJob spec configurable SucessPolicy attribute, not
+				// hard coded logic.
 				if expected == 0 {
 					msg := fmt.Sprintf("PyTorchJob %s is successfully completed.", pytorchjob.Name)
 					logrus.Info(msg)
@@ -433,7 +441,7 @@ func (r *PyTorchJobReconciler) UpdateJobStatus(job interface{},
 			}
 		} else {
 			if rtype == kubeflowv1.PyTorchJobReplicaTypeWorker {
-				// TODO(gaocegege): Support SuccessPolicy
+				// TODO(gaocegege): Support SuccessPolicy <- TfJob already supports this
 				// Leave a succeeded condition for the following two cases:
 				// 1. If all workers are succeeded.
 				// 2. If `ElasticPolicy` is not nil and any worker has completed.
@@ -465,6 +473,7 @@ func (r *PyTorchJobReconciler) UpdateJobStatus(job interface{},
 			}
 		}
 
+		// is this normal? entire job restarts due to failed pod/replica? why not just restart that pod?
 		if failed > 0 && (specReplicas > succeeded+running) {
 			if spec.RestartPolicy != commonv1.RestartPolicyNever {
 				msg := fmt.Sprintf("PyTorchJob %s is restarting because %d %s replica(s) failed.", pytorchjob.Name, failed, rtype)
@@ -538,6 +547,10 @@ func (r *PyTorchJobReconciler) SetClusterSpec(job interface{}, podTemplate *core
 	if err := setPodEnv(job, podTemplate, rtype, index); err != nil {
 		return err
 	}
+	// the initContainer is used to wait until the coordinator is available
+	// before starting up worker containers. This will not be needed in the JobSet
+	// as it can be addressed via job startup sequence and running the coordinator
+	// pod in a different job than the worker pods
 	if err := setInitContainer(job, podTemplate, rtype, index, r.Log); err != nil {
 		return err
 	}
