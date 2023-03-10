@@ -26,7 +26,7 @@ func ValidateV1PyTorchJob(pytorchJob *PyTorchJob) error {
 	if errors := apimachineryvalidation.NameIsDNS1035Label(pytorchJob.ObjectMeta.Name, false); errors != nil {
 		return fmt.Errorf("PyTorchJob name is invalid: %v", errors)
 	}
-	// custom validation for pytorchjob
+	// custom validation for pytorchjob (see comments in validatePyTorchReplicaSpecs function)
 	if err := validatePyTorchReplicaSpecs(pytorchJob.Spec.PyTorchReplicaSpecs); err != nil {
 		return err
 	}
