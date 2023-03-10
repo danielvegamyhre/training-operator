@@ -76,7 +76,7 @@ type PyTorchJobSpec struct {
 	//+kubebuilder:validation:Optional
 	RunPolicy commonv1.RunPolicy `json:"runPolicy"`
 
-	// Tensorflow has no elastic policy
+	// Tensorflow has no elastic po
 	ElasticPolicy *ElasticPolicy `json:"elasticPolicy,omitempty"`
 
 	// A map of PyTorchReplicaType (type) to ReplicaSpec (value). Specifies the PyTorch cluster configuration.
@@ -85,7 +85,7 @@ type PyTorchJobSpec struct {
 	//     "Master": PyTorchReplicaSpec,
 	//     "Worker": PyTorchReplicaSpec,
 	//   }
-	// this is the same as TFJob
+	// this field has the same data type as TFJobReplicaSpecs
 	PyTorchReplicaSpecs map[commonv1.ReplicaType]*commonv1.ReplicaSpec `json:"pytorchReplicaSpecs"`
 }
 
