@@ -20,6 +20,9 @@ import (
 	commonv1 "github.com/kubeflow/common/pkg/apis/common/v1"
 )
 
+// same validation logic as pytorch and tensorflow.
+// checks there is only 1 launcher pod, that the replica
+// types are valid, and each pod has a valid container name + image.
 func ValidateV1MpiJobSpec(c *MPIJobSpec) error {
 	if c.MPIReplicaSpecs == nil {
 		return fmt.Errorf("MPIReplicaSpecs is not valid")

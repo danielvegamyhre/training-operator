@@ -139,6 +139,7 @@ func (jc *MPIJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	}
 
 	// skip for MPIJob that is being deleted
+	// this check doesn't exist in pytorch or tensorflow
 	if mpijob.GetDeletionTimestamp() != nil {
 		return ctrl.Result{}, nil
 	}
@@ -149,6 +150,7 @@ func (jc *MPIJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	// 1) validation rules out CleanPolicy with contradicting value
 	// 2) if both fields leave empty, Default function fills with None
 	// 3) if only one field set, sync value
+	// this "clean pod policy" concept does not exist in pytorch/TF
 	cleanPolicyDefined := mpijob.Spec.CleanPodPolicy
 	if mpijob.Spec.RunPolicy.CleanPodPolicy != nil {
 		cleanPolicyDefined = mpijob.Spec.RunPolicy.CleanPodPolicy
@@ -276,6 +278,7 @@ func (jc *MPIJobReconciler) SetupWithManager(mgr ctrl.Manager, controllerThreads
 }
 
 // ReconcileServices is overridden because mpi-reconciler.v1 does not need to reconcile services
+// neither pytorch or TF override this method.
 func (jc *MPIJobReconciler) ReconcileServices(
 	job metav1.Object,
 	services []*corev1.Service,
@@ -346,6 +349,11 @@ func (jc *MPIJobReconciler) onOwnerCreateFunc() func(event.CreateEvent) bool {
 	}
 }
 
+// MPI and TF override this method, Pytorch does not.
+// Main differences between MPI and TF ReconcilePods()
+// are:
+// 1) MPI needs to create a service account, RBAC role, and RoleBinding for the launcher pod
+// 2) MPI dynamically creats a ConfigMap with config details for the job
 func (jc *MPIJobReconciler) ReconcilePods(
 	job interface{},
 	jobStatus *commonv1.JobStatus,
@@ -376,9 +384,12 @@ func (jc *MPIJobReconciler) ReconcilePods(
 
 	var worker []*corev1.Pod
 	// We're done if the launcher either succeeded or failed.
+	// this can be defined by JobSet SucessPolicy
 	done := launcher != nil && isPodFinished(launcher)
 
 	if !done {
+		// The below logic all completley different than the TF job controller's implementation
+		// of ReconcilePods().
 		workerSpec := mpiJob.Spec.MPIReplicaSpecs[kubeflowv1.MPIJobReplicaTypeWorker]
 		workerReplicas := int32(0)
 		if workerSpec != nil && workerSpec.Replicas != nil {
@@ -387,21 +398,25 @@ func (jc *MPIJobReconciler) ReconcilePods(
 		isGPULauncher := isGPULauncher(mpiJob)
 
 		// Get the launcher ServiceAccount for this MPIJob.
+		// other controllers don't need a SA
 		if sa, err := jc.getOrCreateLauncherServiceAccount(mpiJob); sa == nil || err != nil {
 			return err
 		}
 
 		// Get the ConfigMap for this MPIJob.
+		// other controllers don't need to create or reference a ConfigMap for config details
 		if config, err := jc.getOrCreateConfigMap(mpiJob, workerReplicas, isGPULauncher); config == nil || err != nil {
 			return err
 		}
 
 		// Get the launcher Role for this MPIJob.
+		// other controllers don't need to create a special RBAC role for the leader pod
 		if r, err := jc.getOrCreateLauncherRole(mpiJob, workerReplicas); r == nil || err != nil {
 			return err
 		}
 
 		// Get the launcher RoleBinding for this MPIJob.
+		// other controllers don't need to configure special RoleBinding for leader pod <-> Launcher role
 		if rb, err := jc.getLauncherRoleBinding(mpiJob); rb == nil || err != nil {
 			return err
 		}
@@ -434,6 +449,8 @@ func (jc *MPIJobReconciler) ReconcilePods(
 func (jc *MPIJobReconciler) updateMPIJobStatus(mpiJob *kubeflowv1.MPIJob, launcher *corev1.Pod, worker []*corev1.Pod) error {
 	if launcher != nil {
 		initializeMPIJobStatuses(mpiJob, kubeflowv1.MPIJobReplicaTypeLauncher)
+		// if launcher is succeeded or failed, job is done. this is a conventional
+		// success/failure policy that can be represented by JobSet easily.
 		if isPodSucceeded(launcher) {
 			mpiJob.Status.ReplicaStatuses[kubeflowv1.MPIJobReplicaTypeLauncher].Succeeded = 1
 			msg := fmt.Sprintf("MPIJob %s/%s successfully completed.", mpiJob.Namespace, mpiJob.Name)
@@ -477,6 +494,7 @@ func (jc *MPIJobReconciler) updateMPIJobStatus(mpiJob *kubeflowv1.MPIJob, launch
 	)
 
 	initializeMPIJobStatuses(mpiJob, kubeflowv1.MPIJobReplicaTypeWorker)
+	// evicts failed pods and tracks succeeded and active pods
 	for i := 0; i < len(worker); i++ {
 		switch worker[i].Status.Phase {
 		case corev1.PodFailed:
@@ -584,6 +602,7 @@ func (jc *MPIJobReconciler) GetServicesForJob(jobObject interface{}) ([]*corev1.
 	return nil, nil
 }
 
+// this looks pretty much the same as pytorch and TF
 func (jc *MPIJobReconciler) UpdateJobStatus(job interface{}, replicas map[commonv1.ReplicaType]*commonv1.ReplicaSpec, jobStatus *commonv1.JobStatus) error {
 	mpiJob, ok := job.(*kubeflowv1.MPIJob)
 	if !ok {
@@ -987,6 +1006,7 @@ func (jc *MPIJobReconciler) newWorker(mpiJob *kubeflowv1.MPIJob, name string) *c
 
 	// We need the kubexec.sh script here because Open MPI checks for the path
 	// in every rank.
+	// perhaps this can be handled in JobSet via a ConfigSource with a MountPath?
 	container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{
 		Name:      configVolumeName,
 		MountPath: configMountPath,
@@ -1003,7 +1023,7 @@ func (jc *MPIJobReconciler) newWorker(mpiJob *kubeflowv1.MPIJob, name string) *c
 				},
 				Items: []corev1.KeyToPath{
 					{
-						Key:  kubexecScriptName,
+						Key:  kubexecScriptName, // this script is used in lieu of SSH for remote execution
 						Path: kubexecScriptName,
 						Mode: &scriptMode,
 					},
@@ -1089,7 +1109,7 @@ func (jc *MPIJobReconciler) newLauncher(mpiJob *kubeflowv1.MPIJob, kubectlDelive
 		Env: []corev1.EnvVar{
 			{
 				Name:  kubectlTargetDirEnv,
-				Value: kubectlMountPath,
+				Value: kubectlMountPath, // presumably initContainer runs the kubexec.sh script
 			},
 			{
 				Name:  "NAMESPACE",
@@ -1254,12 +1274,14 @@ func (jc *MPIJobReconciler) getRunningWorkerPods(mpiJob *kubeflowv1.MPIJob) ([]*
 // newConfigMap creates a new ConfigMap containing configurations for an MPIJob
 // resource. It also sets the appropriate OwnerReferences on the resource so
 // handleObject can discover the MPIJob resource that 'owns' it.
+// mpi controller dynamically creates ConfigMaps containing configurations
+// for an MPI job, this is very unlike pytorch or TF
 func newConfigMap(mpiJob *kubeflowv1.MPIJob, workerReplicas int32, isGPULauncher bool) *corev1.ConfigMap {
 	kubexec := fmt.Sprintf(`#!/bin/sh
 set -x
 POD_NAME=$1
 shift
-%s/kubectl exec ${POD_NAME}`, kubectlMountPath)
+%s/kubectl exec ${POD_NAME}`, kubectlMountPath) // this mount path is later passed to initContainer as env var so it can run the script
 	if len(mpiJob.Spec.MainContainer) > 0 {
 		kubexec = fmt.Sprintf("%s --container %s", kubexec, mpiJob.Spec.MainContainer)
 	}
@@ -1278,6 +1300,8 @@ shift
 		buffer.WriteString(fmt.Sprintf("%s%s-%d slots=%d\n", mpiJob.Name, workerSuffix, i, slots))
 	}
 
+	// ConfigMap specifies hostfilename and kubectl exec command script
+	// for the MPI job.
 	return &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      mpiJob.Name + configSuffix,

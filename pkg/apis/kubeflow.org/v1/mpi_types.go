@@ -35,6 +35,7 @@ const (
 	MPIJobSingular = "mpijob"
 	// MPIJobFrameworkName is the name of the ML Framework
 	MPIJobFrameworkName = "mpi"
+	// Only 2 types of replicas: launcher and worker
 	// MPIJobReplicaTypeLauncher is the type for launcher replica.
 	MPIJobReplicaTypeLauncher commonv1.ReplicaType = "Launcher"
 	// MPIJobReplicaTypeWorker is the type for worker replicas.
@@ -61,18 +62,27 @@ type MPIJobSpec struct {
 	// Specifies the number of slots per worker used in hostfile.
 	// Defaults to 1.
 	// +optional
+	// According to this doc http://shortn/_GTE3KOKXk5 the
+	// Slots per worker is referring to the number of processors
+	// per worker process. Pytorch and TF do not have anything similar.
 	SlotsPerWorker *int32 `json:"slotsPerWorker,omitempty"`
 
 	// CleanPodPolicy defines the policy that whether to kill pods after the job completes.
 	// Defaults to None.
+	// Pytorch and TF do not have this - we could potentially add a similar field
+	// to the JobSet but I don't think it is actually necessary, since it defaults
+	// to "none" anyway.
 	CleanPodPolicy *commonv1.CleanPodPolicy `json:"cleanPodPolicy,omitempty"`
 
 	// `MPIReplicaSpecs` contains maps from `MPIReplicaType` to `ReplicaSpec` that
 	// specify the MPI replicas to run.
+	// All controllers use same data type for replica spec map, which is good
 	MPIReplicaSpecs map[commonv1.ReplicaType]*commonv1.ReplicaSpec `json:"mpiReplicaSpecs"`
 
 	// MainContainer specifies name of the main container which
 	// executes the MPI code.
+	// no such field in pytorch or TF, they just assume the
+	// main container is named some hardcoded string like "tensorflow"
 	MainContainer string `json:"mainContainer,omitempty"`
 
 	// `RunPolicy` encapsulates various runtime policies of the distributed training
